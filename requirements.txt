@@ -6,3 +6,5 @@ numpy
 matplotlib
 seaborn
 gensim
+streamlite
+google-search-results
