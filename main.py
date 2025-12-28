@@ -1,15 +1,10 @@
-import requests
-import nltk
-
-nltk.download("punkt", quiet=True)
-nltk.download("stopwords", quiet=True)
-
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.corpus import stopwords
+from serpapi import GoogleSearch
+from nltk.tokenize import sent_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+# ================= NLP FUNCTIONS =================
 def sentence_similarity(claim, sentence):
     vectorizer = TfidfVectorizer()
     vectors = vectorizer.fit_transform([claim, sentence])
@@ -40,30 +35,60 @@ def ethical_warning(text):
     return "None"
 
 
-def fetch_articles(claim, api_key, max_articles=5):
-    url = (
-        f"https://newsapi.org/v2/everything?"
-        f"q={claim}&pageSize={max_articles}&language=en&sortBy=relevancy"
-    )
-    headers = {"Authorization": api_key}
-    response = requests.get(url, headers=headers)
+# ================= SERPAPI FETCH =================
 
-    if response.status_code != 200:
+
+def fetch_articles(claim, api_key, max_articles=5):
+    print("\n>>> Fetching news using SerpApi")
+
+    params = {
+        "engine": "google_news",
+        "q": claim,
+        "hl": "en",
+        "gl": "us",
+        "num": max_articles,
+        "api_key": api_key
+    }
+
+    try:
+        search = GoogleSearch(params)
+        #print(">>> SerpApi search object created")
+
+        results = search.get_dict()
+        #print(">>> SerpApi request completed")
+
+    except Exception as e:
+        print(">>> ERROR while fetching from SerpApi:", e)
         return []
 
+    #print(">>> SerpApi response keys:", results)
+
     articles = []
-    for item in response.json().get("articles", []):
+
+    if "news_results" not in results:
+        print(">>> No news_results found in response")
+        return articles
+
+    for item in results["news_results"]:
+        #print(">>> Fetched:", item.get("title"))
+
         articles.append({
-            "source": item["source"]["name"],
-            "date": item["publishedAt"][:10],
-            "text": (item["title"] or "") + ". " + (item["description"] or "")
+            "source": item.get("source", "Unknown"),
+            "date": item.get("date", "N/A"),
+            "text": (
+                (item.get("title") or "") + ". " +
+                (item.get("snippet") or "")
+            )
         })
+
     return articles
+
 
 
 def final_verdict(results):
     s = sum(r["Stance"] == "Supports" for r in results)
     c = sum(r["Stance"] == "Contradicts" for r in results)
+
     if s > c:
         return "Verified", round(s / len(results), 2)
     if c > s:
@@ -81,17 +106,19 @@ def print_timeline(results):
 if __name__ == "__main__":
 
     claim = "Amazon is shutting down data centers in Europe"
-    API_KEY = "60ff4dd213a441ab9be84c76750b059c"
+    API_KEY = "8198373a9102fdb800c25e0c8337ff05cfce241afeb057f3d5a276588fee86dd"
 
     articles = fetch_articles(claim, API_KEY)
 
     if not articles:
+        print("\n[WARNING] No articles found. Using fallback.")
         articles = [{
             "source": "BBC",
             "date": "2024-11-02",
             "text": "Amazon announced it is expanding its data centers in Europe."
         }]
 
+    # ================= ANALYSIS =================
     results = []
 
     for article in articles:
@@ -115,14 +142,16 @@ if __name__ == "__main__":
             "Evidence": best_sentence
         })
 
-    print(f"{'Source':<12}{'Date':<12}{'Rel':<6}{'Stance':<12}{'Sentiment':<10}{'Warnings':<12}Evidence")
-    print("-" * 110)
+    # ================= OUTPUT TABLE =================
+    print("\n===== ANALYSIS RESULTS =====")
+    print(f"{'Source':<15}{'Date':<15}{'Rel':<6}{'Stance':<12}{'Sentiment':<10}{'Warnings':<12}Evidence")
+    print("-" * 120)
 
-    for r in results:
-        print(
-            f"{r['Source']:<12}{r['Date']:<12}{r['Relevance']:<6}"
-            f"{r['Stance']:<12}{r['Sentiment']:<10}{r['Warnings']:<12}{r['Evidence']}"
-        )
+for r in results:
+    print(
+        f"{str(r['Source']):<15}{str(r['Date']):<15}{r['Relevance']:<6}"
+        f"{r['Stance']:<12}{r['Sentiment']:<10}{r['Warnings']:<12}{r['Evidence']}"
+    )
 
     verdict, confidence = final_verdict(results)
     print("\nFINAL VERDICT:", verdict)
