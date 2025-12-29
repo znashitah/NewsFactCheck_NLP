@@ -2,6 +2,30 @@ from serpapi import GoogleSearch
 from nltk.tokenize import sent_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import requests
+import json
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL = "llama3"
+
+def run_ollama(prompt):
+    print(">>> Sending request to Ollama...")
+
+    response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={
+            "model": "llama3",
+            "prompt": prompt,
+            "stream": False
+        },
+        timeout=180
+    )
+
+    print(">>> HTTP status:", response.status_code)
+    print(">>> Raw response text:", response.text)
+
+    response.raise_for_status()
+    return response.json()["response"]
 
 
 # ================= NLP FUNCTIONS =================
@@ -34,7 +58,47 @@ def ethical_warning(text):
         return "Clickbait"
     return "None"
 
+def build_prompt(claim, articles):
+    articles_text = ""
+    for i, article in enumerate(articles):
+        articles_text += f"""
+Article {i+1}:
+{article}
+"""
 
+    prompt = f"""
+You are an expert fact-checking and claim verification AI.
+
+User Claim:
+"{claim}"
+
+Below are raw statements extracted from online articles:
+{articles_text}
+
+Your tasks:
+1. Determine the stance of EACH article toward the claim (support / refute / neutral)
+2. Identify sentiment (positive / neutral / negative)
+3. Detect misinformation or warning signals
+4. Provide a confidence score (0–100)
+5. Give a final verdict: True / False / Misleading / Unverifiable
+
+Return ONLY valid JSON in the following format:
+
+{{
+  "article_analysis": [
+    {{
+      "article_id": 1,
+      "stance": "",
+      "sentiment": "",
+      "notes": ""
+    }}
+  ],
+  "overall_warnings": "",
+  "final_verdict": "",
+  "confidence": 0
+}}
+"""
+    return prompt
 # ================= SERPAPI FETCH =================
 
 
@@ -118,6 +182,14 @@ if __name__ == "__main__":
             "text": "Amazon announced it is expanding its data centers in Europe."
         }]
 
+    prompt = build_prompt(claim, articles)
+
+    print("\n--- PROMPT SENT TO OLLAMA ---\n")
+    print(prompt)
+
+    print("\n--- OLLAMA ANALYSIS RESULT ---\n")
+    result = run_ollama(prompt)
+    print(result)
     # ================= ANALYSIS =================
     results = []
 
@@ -143,18 +215,18 @@ if __name__ == "__main__":
         })
 
     # ================= OUTPUT TABLE =================
-    print("\n===== ANALYSIS RESULTS =====")
-    print(f"{'Source':<15}{'Date':<15}{'Rel':<6}{'Stance':<12}{'Sentiment':<10}{'Warnings':<12}Evidence")
-    print("-" * 120)
+#    print("\n===== ANALYSIS RESULTS =====")
+#    print(f"{'Source':<15}{'Date':<15}{'Rel':<6}{'Stance':<12}{'Sentiment':<10}{'Warnings':<12}Evidence")
+#    print("-" * 120)
 
-for r in results:
-    print(
-        f"{str(r['Source']):<15}{str(r['Date']):<15}{r['Relevance']:<6}"
-        f"{r['Stance']:<12}{r['Sentiment']:<10}{r['Warnings']:<12}{r['Evidence']}"
-    )
+#for r in results:
+    #print(
+    #    f"{str(r['Source']):<15}{str(r['Date']):<15}{r['Relevance']:<6}"
+    #    f"{r['Stance']:<12}{r['Sentiment']:<10}{r['Warnings']:<12}{r['Evidence']}"
+    #)
 
-    verdict, confidence = final_verdict(results)
-    print("\nFINAL VERDICT:", verdict)
-    print("Confidence:", confidence)
+    #verdict, confidence = final_verdict(results)
+    #print("\nFINAL VERDICT:", verdict)
+    #print("Confidence:", confidence)
 
-    print_timeline(results)
+    #print_timeline(results)

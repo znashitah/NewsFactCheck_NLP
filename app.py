@@ -7,8 +7,73 @@ from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 from serpapi import GoogleSearch
 
-nltk.download("punkt")
+#nltk.download("punkt")
+import requests
+import json
 
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL = "llama3"
+
+def run_ollama(prompt):
+    print(">>> Sending request to Ollama...")
+
+    response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={
+            "model": "llama3",
+            "prompt": prompt,
+            "stream": False
+        },
+        timeout=180
+    )
+
+    print(">>> HTTP status:", response.status_code)
+    print(">>> Raw response text:", response.text)
+
+    response.raise_for_status()
+    return response.json()["response"]
+
+def build_prompt(claim, articles):
+    articles_text = ""
+    for i, article in enumerate(articles):
+        articles_text += f"""
+Article {i+1}:
+{article}
+"""
+
+    prompt = f"""
+You are an expert fact-checking and claim verification AI.
+
+User Claim:
+"{claim}"
+
+Below are raw statements extracted from online articles:
+{articles_text}
+
+Your tasks:
+1. Determine the stance of EACH article toward the claim (support / refute / neutral)
+2. Identify sentiment (positive / neutral / negative)
+3. Detect misinformation or warning signals
+4. Provide a confidence score (0–100)
+5. Give a final verdict: True / False / Misleading / Unverifiable
+
+Return ONLY valid JSON in the following format:
+
+{{
+  "article_analysis": [
+    {{
+      "article_id": 1,
+      "stance": "",
+      "sentiment": "",
+      "notes": ""
+    }}
+  ],
+  "overall_warnings": "",
+  "final_verdict": "",
+  "confidence": 0
+}}
+"""
+    return prompt
 # =================== API KEYS ===================
 SERP_API_KEY = "8198373a9102fdb800c25e0c8337ff05cfce241afeb057f3d5a276588fee86dd"
 
@@ -124,6 +189,15 @@ if st.button("Verify News"):
         reverse=True
     )[:5]
 
+
+    prompt = build_prompt(claim, articles)
+
+    print("\n--- PROMPT SENT TO OLLAMA ---\n")
+    print(prompt)
+
+    print("\n--- OLLAMA ANALYSIS RESULT ---\n")
+    result = run_ollama(prompt)
+    print(result)
     # 🔍 RAW DATA VIEW
     with st.expander("🔍 View Ranked Articles (Top 5)"):
         st.dataframe(
