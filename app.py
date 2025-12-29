@@ -1,6 +1,5 @@
 # =================== IMPORTS ===================
 import streamlit as st
-import requests
 import nltk
 from nltk.tokenize import sent_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -11,7 +10,6 @@ from serpapi import GoogleSearch
 nltk.download("punkt")
 
 # =================== API KEYS ===================
-NEWS_ORG_API_KEY = "60ff4dd213a441ab9be84c76750b059c"
 SERP_API_KEY = "8198373a9102fdb800c25e0c8337ff05cfce241afeb057f3d5a276588fee86dd"
 
 # =================== FUNCTIONS ===================
@@ -60,7 +58,7 @@ def final_verdict(results):
     else:
         return "Unverified", 0.5
 
-def fetch_serpapi_news(claim, num_results=5):
+def fetch_serpapi_news(claim, num_results=10):
     params = {
         "engine": "google_news",
         "q": claim,
@@ -69,7 +67,6 @@ def fetch_serpapi_news(claim, num_results=5):
         "hl": "en",
         "gl": "us"
     }
-
     search = GoogleSearch(params)
     results = search.get_dict()
 
@@ -80,7 +77,6 @@ def fetch_serpapi_news(claim, num_results=5):
             "date": item.get("date", "N/A"),
             "text": (item.get("title") or "") + ". " + (item.get("snippet") or "")
         })
-
     return articles
 
 # =================== STREAMLIT UI ===================
@@ -92,59 +88,80 @@ claim = st.text_input(
 )
 
 if st.button("Verify News"):
+
     if not claim.strip():
         st.warning("Please enter a claim first.")
-    else:
-        st.info("Fetching and analyzing articles...")
+        st.stop()
 
-        articles = fetch_serpapi_news(claim)
+    st.info("Fetching articles...")
 
-        if not articles:
-            st.warning("No articles found. Using fallback.")
-            articles = [{
-                "source": "BBC",
-                "date": "2024-11-02",
-                "text": "Amazon announced it is expanding its data centers in Europe."
-            }]
+    raw_articles = fetch_serpapi_news(claim)
 
-        # 🔍 SHOW RAW FETCHED DATA
-        with st.expander("🔍 View Raw Fetched Articles"):
-            st.dataframe(pd.DataFrame(articles))
+    if not raw_articles:
+        st.warning("No articles found. Using fallback.")
+        raw_articles = [{
+            "source": "BBC",
+            "date": "2024-11-02",
+            "text": "Amazon announced it is expanding its data centers in Europe."
+        }]
 
-        # ================= ANALYSIS =================
-        results = []
-        for article in articles:
-            sentences = sent_tokenize(article["text"])
-            best_sentence = ""
-            best_score = 0
+    # ================= RANKING =================
+    ranked_articles = []
 
-            for s in sentences:
-                score = sentence_similarity(claim, s)
-                if score > best_score:
-                    best_score = score
-                    best_sentence = s
+    for article in raw_articles:
+        sentences = sent_tokenize(article["text"])
+        max_score = 0
+        for s in sentences:
+            score = sentence_similarity(claim, s)
+            max_score = max(max_score, score)
 
-            results.append({
-                "Source": article["source"],
-                "Date": article["date"],
-                "Relevance": round(best_score, 2),
-                "Stance": detect_stance(best_sentence),
-                "Sentiment": detect_sentiment(article["text"]),
-                "Warnings": ethical_warning(article["text"]),
-                "Evidence": best_sentence
-            })
+        article["rank_score"] = round(max_score, 3)
+        ranked_articles.append(article)
 
-        # 📊 ANALYSIS TABLE
-        st.subheader("📊 Verification Table")
-        st.dataframe(pd.DataFrame(results))
+    articles = sorted(
+        ranked_articles,
+        key=lambda x: x["rank_score"],
+        reverse=True
+    )[:5]
 
-        # ✅ FINAL VERDICT
-        verdict, confidence = final_verdict(results)
-        st.subheader("✅ Final Verdict")
-        st.write(f"**Verdict:** {verdict}")
-        st.write(f"**Confidence:** {confidence}")
+    # 🔍 RAW DATA VIEW
+    with st.expander("🔍 View Ranked Articles (Top 5)"):
+        st.dataframe(
+            pd.DataFrame(articles)[["source", "date", "rank_score", "text"]]
+        )
 
-        # 🕒 TIMELINE
-        st.subheader("🕒 News Timeline")
-        for r in sorted(results, key=lambda x: x["Date"]):
-            st.write(f"{r['Date']} | {r['Source']} | {r['Stance']}")
+    # ================= ANALYSIS =================
+    results = []
+    for article in articles:
+        sentences = sent_tokenize(article["text"])
+        best_sentence = ""
+        best_score = 0
+
+        for s in sentences:
+            score = sentence_similarity(claim, s)
+            if score > best_score:
+                best_score = score
+                best_sentence = s
+
+        results.append({
+            "Source": article["source"],
+            "Date": article["date"],
+            "Relevance": round(best_score, 2),
+            "Stance": detect_stance(best_sentence),
+            "Sentiment": detect_sentiment(article["text"]),
+            "Warnings": ethical_warning(article["text"]),
+            "Evidence": best_sentence
+        })
+
+    # 📊 RESULTS
+    st.subheader("📊 Verification Table")
+    st.dataframe(pd.DataFrame(results))
+
+    verdict, confidence = final_verdict(results)
+    st.subheader("✅ Final Verdict")
+    st.write(f"**Verdict:** {verdict}")
+    st.write(f"**Confidence:** {confidence}")
+
+    st.subheader("🕒 News Timeline")
+    for r in sorted(results, key=lambda x: x["Date"]):
+        st.write(f"{r['Date']} | {r['Source']} | {r['Stance']}")
