@@ -6,59 +6,46 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 from serpapi import GoogleSearch
-
-#nltk.download("punkt")
 import requests
 import json
+
+# nltk.download("punkt")
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "llama3"
 
-def run_ollama(prompt):
-    print(">>> Sending request to Ollama...")
+# =================== API KEYS ===================
+SERP_API_KEY = "8198373a9102fdb800c25e0c8337ff05cfce241afeb057f3d5a276588fee86dd"
 
+# =================== LLM ===================
+def run_ollama(prompt):
     response = requests.post(
-        "http://localhost:11434/api/generate",
+        OLLAMA_URL,
         json={
-            "model": "llama3",
+            "model": MODEL,
             "prompt": prompt,
             "stream": False
         },
         timeout=180
     )
-
-    print(">>> HTTP status:", response.status_code)
-    print(">>> Raw response text:", response.text)
-
     response.raise_for_status()
     return response.json()["response"]
 
 def build_prompt(claim, articles):
     articles_text = ""
     for i, article in enumerate(articles):
-        articles_text += f"""
-Article {i+1}:
-{article}
-"""
+        articles_text += f"\nArticle {i+1}:\n{article}\n"
 
-    prompt = f"""
-You are an expert fact-checking and claim verification AI.
+    return f"""
+You are an expert fact-checking AI.
 
-User Claim:
+Claim:
 "{claim}"
 
-Below are raw statements extracted from online articles:
+Articles:
 {articles_text}
 
-Your tasks:
-1. Determine the stance of EACH article toward the claim (support / refute / neutral)
-2. Identify sentiment (positive / neutral / negative)
-3. Detect misinformation or warning signals
-4. Provide a confidence score (0–100)
-5. Give a final verdict: True / False / Misleading / Unverifiable
-
-Return ONLY valid JSON in the following format:
-
+Return ONLY valid JSON:
 {{
   "article_analysis": [
     {{
@@ -73,43 +60,34 @@ Return ONLY valid JSON in the following format:
   "confidence": 0
 }}
 """
-    return prompt
-# =================== API KEYS ===================
-SERP_API_KEY = "8198373a9102fdb800c25e0c8337ff05cfce241afeb057f3d5a276588fee86dd"
 
-# =================== FUNCTIONS ===================
+# =================== NLP HELPERS ===================
 def sentence_similarity(claim, sentence):
     vectorizer = TfidfVectorizer()
     vectors = vectorizer.fit_transform([claim, sentence])
     return cosine_similarity(vectors[0], vectors[1])[0][0]
 
 def detect_stance(sentence):
-    sentence = sentence.lower()
-    if any(w in sentence for w in ["deny", "denied", "false", "not"]):
+    s = sentence.lower()
+    if any(w in s for w in ["deny", "denied", "false", "not"]):
         return "Contradicts"
-    if any(w in sentence for w in ["confirm", "confirmed", "announced", "expanding", "is", "will"]):
+    if any(w in s for w in ["confirm", "confirmed", "announced", "expanding", "will"]):
         return "Supports"
     return "Unverified"
 
 def detect_sentiment(text):
-    text = text.lower()
     pos = ["increase", "growth", "confirmed", "expanding", "investment"]
     neg = ["deny", "false", "shutting", "misinformation"]
-    score = sum(w in text for w in pos) - sum(w in text for w in neg)
+    score = sum(w in text.lower() for w in pos) - sum(w in text.lower() for w in neg)
     return "Positive" if score > 0 else "Negative" if score < 0 else "Neutral"
 
 def ethical_warning(text):
-    text = text.lower()
-    clickbait_words = ["shocking", "you won't believe", "amazing", "secret", "must see", "breaking", "urgent"]
-    extreme_words = ["disaster", "catastrophic", "fake", "crisis"]
-    manipulative_words = ["must see", "urgent", "breaking"]
+    words = text.lower()
     warnings = []
-    if any(w in text for w in clickbait_words):
+    if any(w in words for w in ["shocking", "you won't believe", "breaking"]):
         warnings.append("Clickbait")
-    if any(w in text for w in extreme_words):
+    if any(w in words for w in ["fake", "crisis", "disaster"]):
         warnings.append("Extreme")
-    if any(w in text for w in manipulative_words):
-        warnings.append("Manipulative")
     return ", ".join(warnings) if warnings else "None"
 
 def final_verdict(results):
@@ -120,9 +98,9 @@ def final_verdict(results):
         return "Verified", round(support / total, 2)
     elif contradict > support:
         return "Contradicted", round(contradict / total, 2)
-    else:
-        return "Unverified", 0.5
+    return "Unverified", 0.5
 
+# =================== SERPAPI ===================
 def fetch_serpapi_news(claim, num_results=10):
     params = {
         "engine": "google_news",
@@ -140,102 +118,89 @@ def fetch_serpapi_news(claim, num_results=10):
         articles.append({
             "source": item.get("source", "Unknown"),
             "date": item.get("date", "N/A"),
-            "text": (item.get("title") or "") + ". " + (item.get("snippet") or "")
+            "text": f"{item.get('title','')}. {item.get('snippet','')}"
         })
     return articles
 
-# =================== STREAMLIT UI ===================
-st.title("📰 News Verifier & Context Analyzer")
-
-claim = st.text_input(
-    "Enter a news headline or claim:",
-    placeholder="e.g. Amazon is shutting down data centers in Europe"
-)
-
-if st.button("Verify News"):
-
-    if not claim.strip():
-        st.warning("Please enter a claim first.")
-        st.stop()
-
-    st.info("Fetching articles...")
-
+def fetch_and_rank_articles(claim):
     raw_articles = fetch_serpapi_news(claim)
 
     if not raw_articles:
-        st.warning("No articles found. Using fallback.")
         raw_articles = [{
             "source": "BBC",
             "date": "2024-11-02",
             "text": "Amazon announced it is expanding its data centers in Europe."
         }]
 
-    # ================= RANKING =================
-    ranked_articles = []
-
+    ranked = []
     for article in raw_articles:
-        sentences = sent_tokenize(article["text"])
-        max_score = 0
-        for s in sentences:
-            score = sentence_similarity(claim, s)
-            max_score = max(max_score, score)
+        scores = [
+            sentence_similarity(claim, s)
+            for s in sent_tokenize(article["text"])
+        ]
+        article["rank_score"] = round(max(scores), 3)
+        ranked.append(article)
 
-        article["rank_score"] = round(max_score, 3)
-        ranked_articles.append(article)
+    return sorted(ranked, key=lambda x: x["rank_score"], reverse=True)[:5]
 
-    articles = sorted(
-        ranked_articles,
-        key=lambda x: x["rank_score"],
-        reverse=True
-    )[:5]
+# =================== STREAMLIT UI ===================
+st.title("📰 News Verifier & Context Analyzer")
 
+claim = st.text_input(
+    "Enter a news headline or claim:",
+    placeholder="Amazon is shutting down data centers in Europe"
+)
 
-    prompt = build_prompt(claim, articles)
+col1, col2 = st.columns(2)
 
-    print("\n--- PROMPT SENT TO OLLAMA ---\n")
-    print(prompt)
+# ---------- VERIFY NEWS ----------
+if col1.button("✅ Verify News"):
+    if not claim.strip():
+        st.warning("Please enter a claim.")
+        st.stop()
 
-    print("\n--- OLLAMA ANALYSIS RESULT ---\n")
-    result = run_ollama(prompt)
-    print(result)
-    # 🔍 RAW DATA VIEW
-    with st.expander("🔍 View Ranked Articles (Top 5)"):
-        st.dataframe(
-            pd.DataFrame(articles)[["source", "date", "rank_score", "text"]]
-        )
+    st.session_state.articles = fetch_and_rank_articles(claim)
+    articles = st.session_state.articles
 
-    # ================= ANALYSIS =================
     results = []
     for article in articles:
         sentences = sent_tokenize(article["text"])
-        best_sentence = ""
-        best_score = 0
-
-        for s in sentences:
-            score = sentence_similarity(claim, s)
-            if score > best_score:
-                best_score = score
-                best_sentence = s
+        best_sentence = max(sentences, key=lambda s: sentence_similarity(claim, s))
 
         results.append({
             "Source": article["source"],
             "Date": article["date"],
-            "Relevance": round(best_score, 2),
+            "Relevance": article["rank_score"],
             "Stance": detect_stance(best_sentence),
             "Sentiment": detect_sentiment(article["text"]),
             "Warnings": ethical_warning(article["text"]),
             "Evidence": best_sentence
         })
 
-    # 📊 RESULTS
-    st.subheader("📊 Verification Table")
+    st.subheader("📊 Verification Results")
     st.dataframe(pd.DataFrame(results))
 
     verdict, confidence = final_verdict(results)
     st.subheader("✅ Final Verdict")
-    st.write(f"**Verdict:** {verdict}")
-    st.write(f"**Confidence:** {confidence}")
+    st.write(f"**{verdict}** (confidence: {confidence})")
 
-    st.subheader("🕒 News Timeline")
-    for r in sorted(results, key=lambda x: x["Date"]):
-        st.write(f"{r['Date']} | {r['Source']} | {r['Stance']}")
+# ---------- LLM ANALYSIS ----------
+if col2.button("🤖 Analysis through LLM"):
+    if not claim.strip():
+        st.warning("Please enter a claim.")
+        st.stop()
+
+    articles = fetch_and_rank_articles(claim)
+
+    with st.spinner("Running LLM reasoning..."):
+        prompt = build_prompt(claim, [a["text"] for a in articles])
+        output = run_ollama(prompt)
+
+    st.subheader("🧠 LLM Analysis")
+    try:
+        st.json(json.loads(output))
+    except Exception:
+        st.write(output)
+
+    with st.expander("🔍 Ranked Articles Used"):
+        st.dataframe(pd.DataFrame(articles)[["source", "date", "rank_score", "text"]])
