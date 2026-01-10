@@ -8,6 +8,11 @@ import pandas as pd
 from serpapi import GoogleSearch
 import requests
 import json
+from sentence_transformers import SentenceTransformer
+import numpy as np
+#Initialize embedding model:
+EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+
 
 # nltk.download("punkt")
 
@@ -18,13 +23,28 @@ MODEL = "llama3"
 SERP_API_KEY = "8198373a9102fdb800c25e0c8337ff05cfce241afeb057f3d5a276588fee86dd"
 
 # =================== LLM ===================
+
+#def run_ollama(prompt):
+#    response = requests.post(
+#        OLLAMA_URL,
+#        json={
+#            "model": MODEL,
+#            "prompt": prompt,
+#            "stream": False
+#        },
+#        timeout=180
+#    )
+#    response.raise_for_status()
+#    return response.json()["response"]
+
 def run_ollama(prompt):
     response = requests.post(
         OLLAMA_URL,
         json={
             "model": MODEL,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "format": "json"    # 🚀 FORCE VALID JSON
         },
         timeout=180
     )
@@ -39,11 +59,33 @@ def build_prompt(claim, articles):
     return f"""
 You are an expert fact-checking AI.
 
+IMPORTANT RULES (FOLLOW STRICTLY):
+- You MUST verify the claim ONLY against the provided article texts.
+- Do NOT use any external knowledge.
+- Do NOT reinterpret or soften meanings.
+- You MUST use ONLY these stance labels:
+  - "Supports Claim"
+  - "Refutes Claim"
+  - "Neutral"
+
 Claim:
 "{claim}"
 
 Articles:
 {articles_text}
+
+TASKS:
+1. For EACH article, determine whether it SUPPORTS or REFUTES the claim.
+2. After analyzing all articles:
+   - If MOST articles refute the claim → final_verdict MUST say:
+     "The claim is not supported by the articles."
+   - If MOST articles support the claim → final_verdict MUST say:
+     "The claim is supported by the articles."
+
+CONFIDENCE RULE:
+- Confidence is a number from 0 to 10.
+- Confidence = percentage of articles agreeing with the final verdict.
+
 
 Return ONLY valid JSON:
 {{
@@ -154,7 +196,7 @@ claim = st.text_input(
 col1, col2 = st.columns(2)
 
 # ---------- VERIFY NEWS ----------
-if col1.button("✅ Verify News"):
+if col1.button("Verify Claim via Classical NLP"):
     if not claim.strip():
         st.warning("Please enter a claim.")
         st.stop()
@@ -185,7 +227,7 @@ if col1.button("✅ Verify News"):
     st.write(f"**{verdict}** (confidence: {confidence})")
 
 # ---------- LLM ANALYSIS ----------
-if col2.button("🤖 Analysis through LLM"):
+if col2.button("Verify Claim through LLM"):
     if not claim.strip():
         st.warning("Please enter a claim.")
         st.stop()
@@ -194,13 +236,103 @@ if col2.button("🤖 Analysis through LLM"):
 
     with st.spinner("Running LLM reasoning..."):
         prompt = build_prompt(claim, [a["text"] for a in articles])
+        print(prompt)
         output = run_ollama(prompt)
 
     st.subheader("🧠 LLM Analysis")
     try:
-        st.json(json.loads(output))
+        llm_json = json.loads(output)
+        llm_verdict = llm_json.get("final_verdict", "Verdict not available")
+        llm_confidence = llm_json.get("confidence", "N/A")
+        st.subheader("✅ Final Verdict")
+        st.write(f"**{llm_verdict}** (confidence: {llm_confidence})")
+        st.json(llm_json)
     except Exception:
         st.write(output)
 
     with st.expander("🔍 Ranked Articles Used"):
         st.dataframe(pd.DataFrame(articles)[["source", "date", "rank_score", "text"]])
+        
+# ---------- RAG: Dummy Article Retrieval + LLM Reasoning ----------
+#st.markdown("---")
+#st.subheader("📚 RAG — Rank Dummy Articles Using Embeddings + LLM Analysis")
+
+if st.button("Verify Claim through RAG + LLM"):
+    if not claim.strip():
+        st.warning("Please enter a claim first.")
+        st.stop()
+
+    # Dummy Articles
+    articles = [
+        {"source": "BBC", "date": "2024-11-02", "text": "Amazon announced it is expanding its data centers in Europe."},
+        {"source": "CNN", "date": "2024-10-12", "text": "Amazon denies rumors about shutting down any European data centers."},
+        {"source": "Reuters", "date": "2024-09-21", "text": "Tech companies continue to invest heavily in cloud infrastructure across Europe."},
+        {"source": "TechCrunch", "date": "2024-11-11", "text": "Reports suggested Amazon restructured several European cloud regions but did not shut them down."},
+        {"source": "NYTimes", "date": "2024-10-01", "text": "European governments welcome continued investment in technology expansion."},
+        {"source": "WSJ", "date": "2024-08-18", "text": "Amazon evaluates performance and cost efficiency of its European cloud services."},
+        {"source": "Forbes", "date": "2024-11-20", "text": "Cloud demand is growing rapidly across Europe leading to expansion of data facilities."},
+        {"source": "Guardian", "date": "2024-09-09", "text": "Some speculated closures were misinformation spread on social platforms."},
+        {"source": "Bloomberg", "date": "2024-10-30", "text": "Amazon confirms strategic upgrades to its European cloud infrastructure."},
+        {"source": "Al Jazeera", "date": "2024-07-25", "text": "European tech landscape continues to see rapid cloud infrastructure growth."}
+    ]
+
+    with st.spinner("Generating embeddings and ranking articles..."):
+        # Claim Embedding
+        claim_emb = EMBED_MODEL.encode([claim])
+
+        # Article Embeddings
+        article_texts = [a["text"] for a in articles]
+        article_embs = EMBED_MODEL.encode(article_texts)
+
+        # Similarity
+        sims = cosine_similarity(claim_emb, article_embs)[0]
+
+        ranked = []
+        for art, score, emb in zip(articles, sims, article_embs):
+            ranked.append({
+                "Source": art["source"],
+                "Date": art["date"],
+                "Text": art["text"],
+                "Similarity Score": round(float(score), 4),
+                "Embedding (preview)": emb[:10].tolist(),
+                "Full Embedding": emb.tolist()
+            })
+
+        # Top 5 Ranked Articles
+        ranked = sorted(ranked, key=lambda x: x["Similarity Score"], reverse=True)[:5]
+
+    st.success("Top 5 Articles Retrieved & Ranked using Embeddings")
+
+    st.subheader("🏆 Top 5 Ranked Articles")
+    st.dataframe(pd.DataFrame(ranked)[["Source","Date","Text","Similarity Score","Embedding (preview)"]])
+
+    with st.expander("🔍 View Full Embeddings of Each Article"):
+        st.json(ranked)
+
+    # --------------------------------------
+    # FEED RANKED ARTICLES TO LLM
+    # --------------------------------------
+    st.subheader("🤖 LLM Reasoning on Retrieved Articles")
+
+    top_articles_texts = [r["Text"] for r in ranked]
+
+    with st.spinner("Running LLM analysis using RAG articles..."):
+        prompt = build_prompt(claim, top_articles_texts)
+        llm_output = run_ollama(prompt)
+
+    st.subheader("🧠 LLM Analysis Result")
+
+    try:
+        llm_json = json.loads(llm_output)
+        llm_verdict = llm_json.get("final_verdict", "Verdict not available")
+        llm_confidence = llm_json.get("confidence", "N/A")
+
+        st.subheader("✅ Final Verdict")
+        st.write(f"**{llm_verdict}** (confidence: {llm_confidence})")
+
+        st.json(llm_json)
+
+    except Exception:
+        st.error("LLM did not return valid JSON — raw output shown below")
+        st.write(llm_output)
+
