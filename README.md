@@ -1,4 +1,8 @@
 # Project Introduction
+## Architecture of project:
+![Picture 1](https://github.com/user-attachments/assets/b664d314-cc1a-43e8-9008-6a7534beaaff)
+
+
 
 ## How to run spyder:
 Goto Anacoda Navigator > Environments > nlp_env > Open Terminal
