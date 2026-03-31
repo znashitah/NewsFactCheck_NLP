@@ -1,4 +1,14 @@
 # Project Introduction
+AI based system to check the statment given by user as input is correct or incorrect news by checking various  ranked articles news  fectched via SERP API from trusted source and provide result to user
+It is via classical natural language processing , via LLM or via RAG+LLM.
+## Watch the demo videos:
+classical Natural Language processing system working and results:
+https://youtu.be/UBBz8CB2tIk
+LLM  system of Natural Language processing system working and results:
+https://youtu.be/zt7AclgrMHQ
+LLM + RAG  system of Natural Language processing system working and results:
+https://youtu.be/AToEbCiQM1Q
+
 ## Architecture of project:
 ![Picture 1](https://github.com/user-attachments/assets/b664d314-cc1a-43e8-9008-6a7534beaaff)
 
