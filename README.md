@@ -11,7 +11,28 @@ https://youtu.be/AToEbCiQM1Q
 
 ## Architecture of project:
 ![Picture 1](https://github.com/user-attachments/assets/b664d314-cc1a-43e8-9008-6a7534beaaff)
+##**Description**
 
+Developed an AI-based news claim verification system that analyzes user statements against real-time articles using Classical NLP, LLM, and RAG approaches. The system provides claim validity, stance detection, sentiment analysis, and ethical risk assessment through a hybrid NLP+LLM architecture.
+
+**Key Features**
+- Automated news retrieval and relevance ranking via SerpAPI
+- Claim verification with confidence scoring across 3 methods
+- Comparison of Classical NLP, LLM-only, and LLM+RAG approaches
+- Transparent evidence-based analysis with article sources
+- Interactive Streamlit UI with method selection buttons
+
+**Backend Techstack**
+Python, Streamlit, NLTK, scikit-learn (TF-IDF, Cosine Similarity), Sentence Transformers, Ollama + LLaMA-3, SerpAPI, Pandas
+
+**Frontend Techstack**
+Streamlit
+
+**Database**
+None (Real-time article processing)
+
+**DevOps/Deployment Techstack**
+Local development (Docker-ready)
 
 
 ## How to run spyder:
